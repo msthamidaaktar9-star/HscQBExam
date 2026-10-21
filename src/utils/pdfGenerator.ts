@@ -11,11 +11,11 @@ import { getImageBlobUrl } from '../db/api';
 export interface GeneratePdfOptions {
   paper: Paper;
   groupedQuestions: Array<{ stimulus?: Stimulus; questions: Question[] }>;
-  imageUrls: Record<string, string>;
+  imageUrls?: Record<string, string>;
 }
 
 /**
- * Render RichText string with LaTeX to HTML string for A4 PDF page
+ * Render RichText string with LaTeX to HTML string for A4 PDF column
  */
 function renderRichTextToHtml(rawText: string): string {
   if (!rawText) return '';
@@ -49,9 +49,9 @@ function renderRichTextToHtml(rawText: string): string {
       });
 
       if (isBlock) {
-        html += `<div style="text-align: center; margin: 6px 0; max-width: 100%; overflow: hidden; font-size: 0.95em;">${rendered}</div>`;
+        html += `<div style="text-align: center; margin: 4px 0; max-width: 100%; overflow: hidden; font-size: 0.9em;">${rendered}</div>`;
       } else {
-        html += `<span style="display: inline-block; vertical-align: middle; margin: 0 2px; max-width: 100%; overflow: hidden; font-size: 0.95em;">${rendered}</span>`;
+        html += `<span style="display: inline-block; vertical-align: middle; margin: 0 1px; max-width: 100%; overflow: hidden; font-size: 0.9em;">${rendered}</span>`;
       }
     } catch {
       html += escapeHtml(token);
@@ -65,6 +65,125 @@ function renderRichTextToHtml(rawText: string): string {
   }
 
   return html;
+}
+
+/**
+ * Convert SVG text to crisp high-res PNG Base64 Data URL via canvas
+ * Ensures html2canvas-pro can render vectors, text, and lines with 100% reliability
+ */
+async function convertSvgToPngDataUrl(svgText: string): Promise<string> {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgText, 'image/svg+xml');
+  const svgEl = doc.querySelector('svg');
+  if (!svgEl) {
+    throw new Error('Invalid SVG content');
+  }
+
+  // Determine intrinsic dimensions from viewBox or attributes
+  let width = 380;
+  let height = 220;
+
+  const vb = svgEl.getAttribute('viewBox');
+  if (vb) {
+    const parts = vb.trim().split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+      width = parts[2];
+      height = parts[3];
+    }
+  } else {
+    const attrW = parseFloat(svgEl.getAttribute('width') || '');
+    const attrH = parseFloat(svgEl.getAttribute('height') || '');
+    if (!isNaN(attrW) && attrW > 0) width = attrW;
+    if (!isNaN(attrH) && attrH > 0) height = attrH;
+  }
+
+  // Force explicit pixel width and height on SVG element for consistent rendering
+  svgEl.setAttribute('width', String(width));
+  svgEl.setAttribute('height', String(height));
+  if (!svgEl.getAttribute('xmlns')) {
+    svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  }
+
+  const serialized = new XMLSerializer().serializeToString(svgEl);
+  const svgDataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized);
+
+  return new Promise<string>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    // Timeout safety fallback
+    const timer = setTimeout(() => {
+      resolve(svgDataUri);
+    }, 2000);
+
+    img.onload = () => {
+      clearTimeout(timer);
+      try {
+        const scale = 2; // 2x for sharp print quality
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(100, Math.round(width * scale));
+        canvas.height = Math.max(60, Math.round(height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(svgDataUri);
+          return;
+        }
+
+        // Crisp white background so transparent SVGs render beautifully on paper
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const pngUrl = canvas.toDataURL('image/png', 1.0);
+        resolve(pngUrl);
+      } catch (err) {
+        console.warn('Canvas export failed for SVG, falling back to data URI:', err);
+        resolve(svgDataUri);
+      }
+    };
+
+    img.onerror = (err) => {
+      clearTimeout(timer);
+      console.warn('Image load failed for SVG, using direct SVG data URI:', err);
+      resolve(svgDataUri);
+    };
+
+    img.src = svgDataUri;
+  });
+}
+
+/**
+ * Robustly resolve any image Blob to a self-contained base64 Data URL
+ * Converts SVGs to high-res PNG data URLs, and JPEGs/PNGs to Base64
+ */
+async function resolveImageToDataUrl(blob: Blob, fileName = ''): Promise<string> {
+  const isSvg =
+    blob.type.includes('svg') ||
+    fileName.toLowerCase().endsWith('.svg');
+
+  if (isSvg) {
+    try {
+      const text = await blob.text();
+      if (text.includes('<svg')) {
+        return await convertSvgToPngDataUrl(text);
+      }
+    } catch (err) {
+      console.warn('Failed to parse SVG blob, falling back to base64 DataURL:', err);
+    }
+  }
+
+  // Standard FileReader to DataURL for PNG, JPG, or fallback
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('ফাইল রূপান্তরে ব্যর্থ হয়েছে'));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('ফাইল রিডিংয়ে সমস্যা'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 /**
@@ -122,13 +241,13 @@ async function blobToBase64Only(blob: Blob): Promise<string> {
 }
 
 /**
- * Build Header element for the first page
+ * Build Header element for the first page (full width spanning both columns)
  */
 function buildPaperHeaderElement(paper: Paper): HTMLElement {
   const headerDiv = document.createElement('div');
   headerDiv.style.textAlign = 'center';
-  headerDiv.style.paddingBottom = '12px';
-  headerDiv.style.marginBottom = '14px';
+  headerDiv.style.paddingBottom = '8px';
+  headerDiv.style.marginBottom = '12px';
   headerDiv.style.borderBottom = '2px solid #000000';
   headerDiv.style.boxSizing = 'border-box';
   headerDiv.style.width = '100%';
@@ -136,10 +255,10 @@ function buildPaperHeaderElement(paper: Paper): HTMLElement {
   // Title
   const titleEl = document.createElement('h1');
   titleEl.textContent = paper.title || 'প্রশ্নপত্র';
-  titleEl.style.fontSize = '20px';
+  titleEl.style.fontSize = '18px';
   titleEl.style.fontWeight = '900';
   titleEl.style.color = '#000000';
-  titleEl.style.margin = '0 0 4px 0';
+  titleEl.style.margin = '0 0 3px 0';
   titleEl.style.lineHeight = '1.3';
   titleEl.style.overflowWrap = 'anywhere';
   titleEl.style.wordBreak = 'break-word';
@@ -151,10 +270,10 @@ function buildPaperHeaderElement(paper: Paper): HTMLElement {
   if (paper.subjectLine) {
     const subEl = document.createElement('p');
     subEl.textContent = paper.subjectLine;
-    subEl.style.fontSize = '13px';
+    subEl.style.fontSize = '12px';
     subEl.style.fontWeight = 'bold';
     subEl.style.color = '#000000';
-    subEl.style.margin = '0 0 6px 0';
+    subEl.style.margin = '0 0 4px 0';
     subEl.style.overflowWrap = 'anywhere';
     subEl.style.wordBreak = 'break-word';
     headerDiv.appendChild(subEl);
@@ -165,10 +284,10 @@ function buildPaperHeaderElement(paper: Paper): HTMLElement {
   metaRow.style.display = 'flex';
   metaRow.style.justifyContent = 'space-between';
   metaRow.style.alignItems = 'center';
-  metaRow.style.fontSize = '12px';
+  metaRow.style.fontSize = '11.5px';
   metaRow.style.fontWeight = 'bold';
   metaRow.style.color = '#000000';
-  metaRow.style.paddingTop = '4px';
+  metaRow.style.paddingTop = '2px';
 
   const durationSpan = document.createElement('span');
   durationSpan.textContent = `সময়: ${paper.duration || '২ ঘণ্টা ৩০ মিনিট'}`;
@@ -184,31 +303,59 @@ function buildPaperHeaderElement(paper: Paper): HTMLElement {
   noteDiv.textContent =
     '[ দ্রষ্টব্য: ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান নির্দেশক। প্রয়োজনীয় ক্ষেত্রে চিত্র অঙ্কন আবশ্যক। ]';
   noteDiv.style.textAlign = 'center';
-  noteDiv.style.fontSize = '11px';
+  noteDiv.style.fontSize = '10px';
   noteDiv.style.fontWeight = '600';
   noteDiv.style.fontStyle = 'italic';
   noteDiv.style.color = '#333333';
-  noteDiv.style.paddingTop = '6px';
+  noteDiv.style.paddingTop = '5px';
   headerDiv.appendChild(noteDiv);
 
   return headerDiv;
 }
 
 /**
- * Build Question Group Block DOM Element
+ * Build mini running header for subsequent pages (Page 2, 3...)
+ */
+function buildMiniHeaderElement(paper: Paper): HTMLElement {
+  const miniHeader = document.createElement('div');
+  miniHeader.style.display = 'flex';
+  miniHeader.style.justifyContent = 'space-between';
+  miniHeader.style.alignItems = 'center';
+  miniHeader.style.paddingBottom = '4px';
+  miniHeader.style.marginBottom = '10px';
+  miniHeader.style.borderBottom = '1px solid #D1D5DB';
+  miniHeader.style.fontSize = '10px';
+  miniHeader.style.fontWeight = 'bold';
+  miniHeader.style.color = '#4B5563';
+  miniHeader.style.width = '100%';
+  miniHeader.style.boxSizing = 'border-box';
+
+  const leftSpan = document.createElement('span');
+  leftSpan.textContent = paper.shortName || paper.title || 'প্রশ্নপত্র';
+  const rightSpan = document.createElement('span');
+  rightSpan.textContent = `পূর্ণমান: ${toBn(paper.totalMarks || 50)}`;
+
+  miniHeader.appendChild(leftSpan);
+  miniHeader.appendChild(rightSpan);
+  return miniHeader;
+}
+
+/**
+ * Build Question Group Block DOM Element designed specifically for a 350px column
  */
 function buildQuestionGroupElement(
   group: { stimulus?: Stimulus; questions: Question[] },
   gIdx: number,
-  imageUrls: Record<string, string>
+  imageUrls: Record<string, string>,
+  colWidthPx = 350
 ): HTMLElement {
   const block = document.createElement('div');
-  block.style.paddingBottom = '14px';
-  block.style.marginBottom = '14px';
+  block.style.paddingBottom = '10px';
+  block.style.marginBottom = '10px';
   block.style.borderBottom = '1px solid #E5E7EB';
   block.style.boxSizing = 'border-box';
-  block.style.width = '100%';
-  block.style.maxWidth = '100%';
+  block.style.width = `${colWidthPx}px`;
+  block.style.maxWidth = `${colWidthPx}px`;
   block.style.overflowWrap = 'anywhere';
   block.style.wordBreak = 'break-word';
 
@@ -217,24 +364,23 @@ function buildQuestionGroupElement(
   topRow.style.display = 'flex';
   topRow.style.justifyContent = 'space-between';
   topRow.style.alignItems = 'flex-start';
-  topRow.style.gap = '8px';
-  topRow.style.marginBottom = '6px';
+  topRow.style.gap = '6px';
+  topRow.style.marginBottom = '4px';
   topRow.style.width = '100%';
 
   const serialSpan = document.createElement('span');
   serialSpan.textContent = `${toBn(gIdx + 1)}।`;
   serialSpan.style.fontWeight = '900';
-  serialSpan.style.fontSize = '14px';
+  serialSpan.style.fontSize = '13px';
   serialSpan.style.color = '#000000';
   serialSpan.style.flexShrink = '0';
   topRow.appendChild(serialSpan);
 
   if (group.stimulus?.boardTag) {
     const boardSpan = document.createElement('span');
-    // Ensure all digits in boardTag are converted to Bengali digits
     const bengaliBoardTag = toBn(group.stimulus.boardTag);
     boardSpan.textContent = `[${bengaliBoardTag}]`;
-    boardSpan.style.fontSize = '11px';
+    boardSpan.style.fontSize = '10px';
     boardSpan.style.fontWeight = '600';
     boardSpan.style.color = '#4B5563';
     boardSpan.style.flexShrink = '0';
@@ -246,11 +392,11 @@ function buildQuestionGroupElement(
   if (group.stimulus?.text) {
     const stimTextDiv = document.createElement('div');
     stimTextDiv.innerHTML = renderRichTextToHtml(group.stimulus.text);
-    stimTextDiv.style.fontSize = '12.5px';
+    stimTextDiv.style.fontSize = '11.5px';
     stimTextDiv.style.fontWeight = '500';
     stimTextDiv.style.color = '#111827';
-    stimTextDiv.style.lineHeight = '1.6';
-    stimTextDiv.style.marginBottom = '8px';
+    stimTextDiv.style.lineHeight = '1.55';
+    stimTextDiv.style.marginBottom = '6px';
     stimTextDiv.style.overflowWrap = 'anywhere';
     stimTextDiv.style.wordBreak = 'break-word';
     stimTextDiv.style.whiteSpace = 'pre-wrap';
@@ -258,22 +404,34 @@ function buildQuestionGroupElement(
     block.appendChild(stimTextDiv);
   }
 
-  // Stimulus Images
+  // Stimulus Images (Sized to fit column nicely, large enough to read, with neat container)
   if (group.stimulus?.imageIds && group.stimulus.imageIds.length > 0) {
     for (const imgId of group.stimulus.imageIds) {
       const url = imageUrls[imgId];
       if (url) {
         const imgWrap = document.createElement('div');
         imgWrap.style.textAlign = 'center';
-        imgWrap.style.margin = '8px 0';
+        imgWrap.style.margin = '6px 0';
+        imgWrap.style.width = '100%';
+        imgWrap.style.boxSizing = 'border-box';
 
         const img = document.createElement('img');
         img.src = url;
         img.alt = 'উদ্দীপক চিত্র';
-        img.style.maxWidth = '230px';
-        img.style.maxHeight = '200px';
+        // Fill width nicely, but never overflow column; allow screenshots enough height to be readable
+        img.style.maxWidth = '100%';
+        img.style.width = 'auto';
+        img.style.height = 'auto';
+        img.style.maxHeight = '260px';
         img.style.objectFit = 'contain';
-        img.style.display = 'inline-block';
+        img.style.display = 'block';
+        img.style.margin = '0 auto';
+        img.style.border = '1px solid #E5E7EB';
+        img.style.borderRadius = '4px';
+        img.style.padding = '2px';
+        img.style.backgroundColor = '#ffffff';
+        img.style.boxSizing = 'border-box';
+
         imgWrap.appendChild(img);
         block.appendChild(imgWrap);
       }
@@ -281,13 +439,12 @@ function buildQuestionGroupElement(
   }
 
   // Sub-questions (গ, ঘ)
-  // Requirement 2: text in flex: 1, min-width: 0, marks in separate column fixed on right
   const subWrap = document.createElement('div');
-  subWrap.style.paddingLeft = '8px';
-  subWrap.style.marginTop = '6px';
+  subWrap.style.paddingLeft = '4px';
+  subWrap.style.marginTop = '4px';
   subWrap.style.display = 'flex';
   subWrap.style.flexDirection = 'column';
-  subWrap.style.gap = '8px';
+  subWrap.style.gap = '6px';
   subWrap.style.width = '100%';
 
   group.questions.forEach((q, qIdx) => {
@@ -295,19 +452,19 @@ function buildQuestionGroupElement(
     qRow.style.display = 'flex';
     qRow.style.alignItems = 'flex-start';
     qRow.style.justifyContent = 'space-between';
-    qRow.style.gap = '8px';
+    qRow.style.gap = '6px';
     qRow.style.width = '100%';
-    qRow.style.fontSize = '12px';
-    qRow.style.lineHeight = '1.5';
+    qRow.style.fontSize = '11.5px';
+    qRow.style.lineHeight = '1.45';
 
     // Left container for label and question text
     const qLeft = document.createElement('div');
     qLeft.style.display = 'flex';
     qLeft.style.alignItems = 'flex-start';
-    qLeft.style.gap = '6px';
+    qLeft.style.gap = '4px';
     qLeft.style.flex = '1';
     qLeft.style.minWidth = '0';
-    qLeft.style.maxWidth = 'calc(100% - 32px)';
+    qLeft.style.maxWidth = 'calc(100% - 24px)';
 
     // Label: "গ." or "(১)"
     const labelSpan = document.createElement('span');
@@ -338,8 +495,8 @@ function buildQuestionGroupElement(
     marksSpan.style.color = '#000000';
     marksSpan.style.flexShrink = '0';
     marksSpan.style.textAlign = 'right';
-    marksSpan.style.paddingLeft = '6px';
-    marksSpan.style.minWidth = '24px';
+    marksSpan.style.paddingLeft = '4px';
+    marksSpan.style.minWidth = '18px';
     qRow.appendChild(marksSpan);
 
     subWrap.appendChild(qRow);
@@ -349,16 +506,29 @@ function buildQuestionGroupElement(
   return block;
 }
 
+interface PageSlot {
+  pageDiv: HTMLElement;
+  col1Div: HTMLElement;
+  col2Div: HTMLElement;
+  dividerDiv: HTMLElement;
+  footerDiv: HTMLElement;
+  maxColHeight: number;
+  col1UsedHeight: number;
+  col2UsedHeight: number;
+}
+
 /**
  * Main PDF Generation and Delivery Function
- * - Strict multi-page layout: width 794px, height 1123px, padding 57px (15mm)
- * - Measurement based pagination so NO question is ever cut across pages
- * - Uses html2canvas-pro to support modern colors without oklab/oklch errors
- * - jsPDF A4 portrait at quality 0.92
- * - Capacitor Filesystem + Share on native, direct download on browser
+ * - Strict 2-column examination layout:
+ *   - Column 1 fills first, then flows to Column 2 of the same page.
+ *   - When both columns of a page are complete, flows to Column 1 of the next page.
+ *   - Questions are NEVER cut across columns or pages!
+ * - SVG vector graphics rasterized to crisp 2x PNG canvas data URIs so they display 100% reliably.
+ * - JPG/PNG images sized appropriately to fit column width without shrinking into unreadability.
+ * - jsPDF A4 portrait with html2canvas-pro.
  */
 export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<void> {
-  const { paper, groupedQuestions, imageUrls } = options;
+  const { paper, groupedQuestions, imageUrls = {} } = options;
   const fileName = `${paper.shortName || 'question-paper'}.pdf`;
 
   // Hidden container for staging and measurement
@@ -375,21 +545,58 @@ export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<
   document.body.appendChild(hiddenRoot);
 
   try {
-    // 1. Wait for fonts and images
-    await waitForFontsAndImages(hiddenRoot);
+    // 1. Resolve ALL images to high-res Base64 DataURLs (SVG -> Canvas PNG, JPG/PNG -> Base64)
+    const resolvedImageUrls: Record<string, string> = { ...imageUrls };
+    const allImageIds: string[] = [];
+
+    for (const g of groupedQuestions) {
+      if (g.stimulus?.imageIds) {
+        allImageIds.push(...g.stimulus.imageIds);
+      }
+      for (const q of g.questions) {
+        if (q.solutionImageIds) {
+          allImageIds.push(...q.solutionImageIds);
+        }
+      }
+    }
+
+    for (const imgId of allImageIds) {
+      const imgRecord = await db.images.get(imgId);
+      if (imgRecord?.blob) {
+        try {
+          resolvedImageUrls[imgId] = await resolveImageToDataUrl(imgRecord.blob, imgRecord.fileName);
+        } catch (e) {
+          console.warn('Could not resolve image to DataURL:', e);
+        }
+      } else if (resolvedImageUrls[imgId]?.startsWith('blob:')) {
+        try {
+          const resp = await fetch(resolvedImageUrls[imgId]);
+          const blob = await resp.blob();
+          resolvedImageUrls[imgId] = await resolveImageToDataUrl(blob);
+        } catch (e) {
+          console.warn('Could not fetch blob URL:', e);
+        }
+      }
+    }
 
     // A4 Dimensions:
-    // Total: 794px x 1123px. Padding: 57px.
-    // Usable Content Area: 680px width x 1009px height.
+    // Total: 794px x 1123px.
+    // Horizontal Margins: 34px left, 34px right -> Usable Width = 726px.
+    // Two Columns: Column 1 (350px) + Gap/Divider (24px) + Column 2 (350px) = 724px.
+    // Vertical Margins: 32px top, 32px bottom -> Usable Height = 1059px.
+    // Footer height: 24px -> Content Height = 1035px.
     const PAGE_WIDTH_PX = 794;
     const PAGE_HEIGHT_PX = 1123;
-    const PAGE_PADDING_PX = 57;
-    const CONTENT_WIDTH_PX = PAGE_WIDTH_PX - PAGE_PADDING_PX * 2; // 680px
-    const CONTENT_HEIGHT_PX = PAGE_HEIGHT_PX - PAGE_PADDING_PX * 2; // 1009px
+    const PAGE_PAD_TOP = 32;
+    const PAGE_PAD_BOTTOM = 32;
+    const PAGE_PAD_HORIZ = 34;
+    const FOOTER_HEIGHT_PX = 24;
+    const COL_WIDTH_PX = 350;
+    const USABLE_PAGE_HEIGHT = PAGE_HEIGHT_PX - PAGE_PAD_TOP - PAGE_PAD_BOTTOM - FOOTER_HEIGHT_PX; // 1035px
 
     // Measurement helper container
     const measureContainer = document.createElement('div');
-    measureContainer.style.width = `${CONTENT_WIDTH_PX}px`;
+    measureContainer.style.width = `${COL_WIDTH_PX}px`;
     measureContainer.style.boxSizing = 'border-box';
     measureContainer.style.position = 'absolute';
     measureContainer.style.left = '0px';
@@ -397,22 +604,32 @@ export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<
     measureContainer.style.visibility = 'hidden';
     hiddenRoot.appendChild(measureContainer);
 
-    // Measure Header
+    // Measure Header (full width: 726px)
     const headerEl = buildPaperHeaderElement(paper);
+    measureContainer.style.width = '726px';
     measureContainer.appendChild(headerEl);
     await waitForFontsAndImages(measureContainer);
     const headerHeight = headerEl.getBoundingClientRect().height || headerEl.offsetHeight;
     measureContainer.removeChild(headerEl);
 
+    // Measure Mini Header for subsequent pages (726px)
+    const miniHeaderSample = buildMiniHeaderElement(paper);
+    measureContainer.appendChild(miniHeaderSample);
+    const miniHeaderHeight = miniHeaderSample.getBoundingClientRect().height || miniHeaderSample.offsetHeight;
+    measureContainer.removeChild(miniHeaderSample);
+
+    // Switch back to column width for question measurements
+    measureContainer.style.width = `${COL_WIDTH_PX}px`;
+
     // Measure each question group
     const measuredGroups: Array<{ element: HTMLElement; height: number }> = [];
     for (let i = 0; i < groupedQuestions.length; i++) {
-      const blockEl = buildQuestionGroupElement(groupedQuestions[i], i, imageUrls);
+      const blockEl = buildQuestionGroupElement(groupedQuestions[i], i, resolvedImageUrls, COL_WIDTH_PX);
       measureContainer.appendChild(blockEl);
       await waitForFontsAndImages(measureContainer);
       const h = blockEl.getBoundingClientRect().height || blockEl.offsetHeight;
       measureContainer.removeChild(blockEl);
-      measuredGroups.push({ element: blockEl, height: h });
+      measuredGroups.push({ element: blockEl, height: Math.ceil(h) });
     }
 
     // Measure End marker ("— সমাপ্ত —")
@@ -420,23 +637,25 @@ export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<
     endMarkerEl.textContent = '— সমাপ্ত —';
     endMarkerEl.style.textAlign = 'center';
     endMarkerEl.style.fontSize = '11px';
-    endMarkerEl.style.color = '#6B7280';
-    endMarkerEl.style.paddingTop = '14px';
+    endMarkerEl.style.fontWeight = 'bold';
+    endMarkerEl.style.color = '#4B5563';
+    endMarkerEl.style.paddingTop = '8px';
+    endMarkerEl.style.paddingBottom = '8px';
     measureContainer.appendChild(endMarkerEl);
-    const endMarkerHeight = endMarkerEl.getBoundingClientRect().height || endMarkerEl.offsetHeight;
+    const endMarkerHeight = Math.ceil(endMarkerEl.getBoundingClientRect().height || endMarkerEl.offsetHeight);
     measureContainer.removeChild(endMarkerEl);
 
-    // Remove measureContainer
+    // Clean up measurement container
     hiddenRoot.removeChild(measureContainer);
 
-    // 2. Pagination Algorithm
-    const pageDivs: HTMLElement[] = [];
+    // 2. Two-Column Pagination Factory
+    const pageSlots: PageSlot[] = [];
 
-    const createNewPageDiv = (isFirstPage: boolean): { pageDiv: HTMLElement; contentDiv: HTMLElement } => {
+    const createPageSlot = (isFirstPage: boolean): PageSlot => {
       const pageDiv = document.createElement('div');
       pageDiv.style.width = `${PAGE_WIDTH_PX}px`;
       pageDiv.style.height = `${PAGE_HEIGHT_PX}px`;
-      pageDiv.style.padding = `${PAGE_PADDING_PX}px`;
+      pageDiv.style.padding = `${PAGE_PAD_TOP}px ${PAGE_PAD_HORIZ}px ${PAGE_PAD_BOTTOM}px ${PAGE_PAD_HORIZ}px`;
       pageDiv.style.boxSizing = 'border-box';
       pageDiv.style.overflow = 'hidden';
       pageDiv.style.background = '#ffffff';
@@ -444,70 +663,189 @@ export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<
       pageDiv.style.fontFamily = "'Hind Siliguri', serif";
       pageDiv.style.display = 'flex';
       pageDiv.style.flexDirection = 'column';
-      pageDiv.style.justifyContent = 'flex-start';
       pageDiv.style.position = 'relative';
 
-      const contentDiv = document.createElement('div');
-      contentDiv.style.width = '100%';
-      contentDiv.style.flex = '1';
-      contentDiv.style.minWidth = '0';
-      contentDiv.style.display = 'flex';
-      contentDiv.style.flexDirection = 'column';
-      pageDiv.appendChild(contentDiv);
-
+      // Header row
       if (isFirstPage) {
-        contentDiv.appendChild(headerEl);
+        pageDiv.appendChild(headerEl);
+      } else {
+        const miniH = buildMiniHeaderElement(paper);
+        pageDiv.appendChild(miniH);
       }
+
+      // Columns Row
+      const columnsRow = document.createElement('div');
+      columnsRow.style.display = 'flex';
+      columnsRow.style.flexDirection = 'row';
+      columnsRow.style.justifyContent = 'space-between';
+      columnsRow.style.alignItems = 'stretch';
+      columnsRow.style.width = '100%';
+      columnsRow.style.flex = '1';
+      columnsRow.style.minHeight = '0';
+      columnsRow.style.boxSizing = 'border-box';
+
+      // Column 1
+      const col1Div = document.createElement('div');
+      col1Div.style.width = `${COL_WIDTH_PX}px`;
+      col1Div.style.maxWidth = `${COL_WIDTH_PX}px`;
+      col1Div.style.display = 'flex';
+      col1Div.style.flexDirection = 'column';
+      col1Div.style.boxSizing = 'border-box';
+
+      // Center Divider line
+      const dividerDiv = document.createElement('div');
+      dividerDiv.style.width = '1px';
+      dividerDiv.style.backgroundColor = '#D1D5DB';
+      dividerDiv.style.margin = '0 10px';
+      dividerDiv.style.flexShrink = '0';
+      dividerDiv.style.alignSelf = 'stretch';
+      dividerDiv.style.transition = 'opacity 0.2s';
+
+      // Column 2
+      const col2Div = document.createElement('div');
+      col2Div.style.width = `${COL_WIDTH_PX}px`;
+      col2Div.style.maxWidth = `${COL_WIDTH_PX}px`;
+      col2Div.style.display = 'flex';
+      col2Div.style.flexDirection = 'column';
+      col2Div.style.boxSizing = 'border-box';
+
+      columnsRow.appendChild(col1Div);
+      columnsRow.appendChild(dividerDiv);
+      columnsRow.appendChild(col2Div);
+      pageDiv.appendChild(columnsRow);
+
+      // Footer with Page Number
+      const footerDiv = document.createElement('div');
+      footerDiv.style.height = `${FOOTER_HEIGHT_PX}px`;
+      footerDiv.style.display = 'flex';
+      footerDiv.style.alignItems = 'center';
+      footerDiv.style.justifyContent = 'center';
+      footerDiv.style.fontSize = '10px';
+      footerDiv.style.fontWeight = '600';
+      footerDiv.style.color = '#6B7280';
+      footerDiv.style.boxSizing = 'border-box';
+      footerDiv.style.marginTop = '4px';
+      pageDiv.appendChild(footerDiv);
 
       hiddenRoot.appendChild(pageDiv);
-      pageDivs.push(pageDiv);
-      return { pageDiv, contentDiv };
+
+      const topUsed = isFirstPage ? headerHeight + 12 : miniHeaderHeight + 10;
+      const maxColHeight = Math.max(250, USABLE_PAGE_HEIGHT - topUsed);
+
+      const slot: PageSlot = {
+        pageDiv,
+        col1Div,
+        col2Div,
+        dividerDiv,
+        footerDiv,
+        maxColHeight,
+        col1UsedHeight: 0,
+        col2UsedHeight: 0,
+      };
+
+      pageSlots.push(slot);
+      return slot;
     };
 
-    let currentPage = createNewPageDiv(true);
-    let currentUsedHeight = headerHeight;
+    // 3. Two-Column Distribution Algorithm:
+    //    Column 1 fills first -> then flows to Column 2 of the same page ->
+    //    when Column 2 is full -> flows to Column 1 of the NEXT page!
+    let currentSlot = createPageSlot(true);
+    let activeCol: 1 | 2 = 1;
 
-    // Distribute measured question blocks across pages
     for (const item of measuredGroups) {
       const blockEl = item.element;
-      const blockHeight = item.height;
+      const blockH = item.height;
 
-      // Check if block fits on current page
-      if (currentUsedHeight + blockHeight <= CONTENT_HEIGHT_PX) {
-        currentPage.contentDiv.appendChild(blockEl);
-        currentUsedHeight += blockHeight;
+      if (activeCol === 1) {
+        if (currentSlot.col1UsedHeight + blockH <= currentSlot.maxColHeight) {
+          currentSlot.col1Div.appendChild(blockEl);
+          currentSlot.col1UsedHeight += blockH;
+        } else {
+          // Column 1 is full! Move to Column 2 of the same page
+          activeCol = 2;
+          if (currentSlot.col2UsedHeight + blockH <= currentSlot.maxColHeight) {
+            currentSlot.col2Div.appendChild(blockEl);
+            currentSlot.col2UsedHeight += blockH;
+          } else {
+            // If block doesn't fit in Column 2 (or Col 2 was already full)
+            if (currentSlot.col2UsedHeight === 0) {
+              // Col 2 is empty, place it here to ensure forward progress
+              currentSlot.col2Div.appendChild(blockEl);
+              currentSlot.col2UsedHeight += blockH;
+            } else {
+              // Open new page and place in Column 1
+              currentSlot = createPageSlot(false);
+              activeCol = 1;
+              currentSlot.col1Div.appendChild(blockEl);
+              currentSlot.col1UsedHeight = blockH;
+            }
+          }
+        }
       } else {
-        // Open a new page (block is never split across two pages!)
-        currentPage = createNewPageDiv(false);
-        currentPage.contentDiv.appendChild(blockEl);
-        currentUsedHeight = blockHeight;
+        // activeCol === 2
+        if (currentSlot.col2UsedHeight + blockH <= currentSlot.maxColHeight) {
+          currentSlot.col2Div.appendChild(blockEl);
+          currentSlot.col2UsedHeight += blockH;
+        } else {
+          // Both columns on this page are full!
+          // Open a new page and place in Column 1
+          currentSlot = createPageSlot(false);
+          activeCol = 1;
+          currentSlot.col1Div.appendChild(blockEl);
+          currentSlot.col1UsedHeight = blockH;
+        }
       }
     }
 
-    // Append End Marker
-    if (currentUsedHeight + endMarkerHeight <= CONTENT_HEIGHT_PX) {
-      currentPage.contentDiv.appendChild(endMarkerEl);
+    // Place End Marker ("— সমাপ্ত —")
+    if (activeCol === 1) {
+      if (currentSlot.col1UsedHeight + endMarkerHeight <= currentSlot.maxColHeight) {
+        currentSlot.col1Div.appendChild(endMarkerEl);
+        currentSlot.col1UsedHeight += endMarkerHeight;
+      } else {
+        // Put in Column 2
+        currentSlot.col2Div.appendChild(endMarkerEl);
+        currentSlot.col2UsedHeight += endMarkerHeight;
+      }
     } else {
-      // If end marker barely doesn't fit, start a new page or attach
-      currentPage.contentDiv.appendChild(endMarkerEl);
+      if (currentSlot.col2UsedHeight + endMarkerHeight <= currentSlot.maxColHeight) {
+        currentSlot.col2Div.appendChild(endMarkerEl);
+        currentSlot.col2UsedHeight += endMarkerHeight;
+      } else {
+        currentSlot.col2Div.appendChild(endMarkerEl);
+      }
     }
 
-    // 3. Wait for all fonts and images inside all pages
+    // Update divider visibility and page footers
+    const totalPages = pageSlots.length;
+    for (let k = 0; k < pageSlots.length; k++) {
+      const slot = pageSlots[k];
+      // If column 2 has content, keep vertical divider visible; otherwise hide to avoid orphan line
+      if (slot.col2UsedHeight > 0) {
+        slot.dividerDiv.style.opacity = '1';
+      } else {
+        slot.dividerDiv.style.opacity = '0';
+      }
+      slot.footerDiv.textContent = `— পৃষ্ঠা ${toBn(k + 1)} / ${toBn(totalPages)} —`;
+    }
+
+    // 4. Wait for all fonts and images inside all pages
     await waitForFontsAndImages(hiddenRoot);
 
-    // 4. Render each page div to jsPDF using html2canvas-pro
+    // 5. Render each page div to jsPDF using html2canvas-pro
     const pdf = new jsPDF({
       unit: 'mm',
       format: 'a4',
       orientation: 'portrait',
     });
 
-    for (let i = 0; i < pageDivs.length; i++) {
+    for (let i = 0; i < pageSlots.length; i++) {
       if (i > 0) {
         pdf.addPage();
       }
 
-      const canvas = await html2canvas(pageDivs[i], {
+      const canvas = await html2canvas(pageSlots[i].pageDiv, {
         scale: 2,
         useCORS: true,
         backgroundColor: '#ffffff',
@@ -523,7 +861,7 @@ export async function generateAndSharePdf(options: GeneratePdfOptions): Promise<
 
     const pdfBlob = pdf.output('blob');
 
-    // 5. Deliver PDF to Android or Web Browser
+    // 6. Deliver PDF to Android or Web Browser
     if (Capacitor.isNativePlatform()) {
       const base64Only = await blobToBase64Only(pdfBlob);
       const cachePath = `qb-${Date.now()}.pdf`;
@@ -645,4 +983,3 @@ export async function exportPaperById(paperId: string): Promise<void> {
     imageUrls: urls,
   });
 }
-

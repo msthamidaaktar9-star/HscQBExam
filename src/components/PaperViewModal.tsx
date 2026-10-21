@@ -231,12 +231,12 @@ export const PaperViewModal: React.FC<PaperViewModalProps> = ({
                     return (
                       <div
                         key={imgId}
-                        className="my-2 max-w-[220px] mx-auto overflow-hidden text-center"
+                        className="my-2.5 max-w-full sm:max-w-sm mx-auto overflow-hidden text-center rounded-lg border border-gray-200 p-1 bg-white"
                       >
                         <img
                           src={url}
                           alt="উদ্দীপক চিত্র"
-                          className="w-full h-auto object-contain mx-auto"
+                          className="w-full h-auto max-h-[260px] object-contain mx-auto rounded"
                         />
                       </div>
                     );
