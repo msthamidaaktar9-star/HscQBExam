@@ -42,16 +42,24 @@ jobs:
 
       - name: Disable Android 15 Edge-to-Edge Enforcement in styles.xml
         run: |
-          STYLES_FILE="android/app/src/main/res/values/styles.xml"
-          if [ -f "$STYLES_FILE" ]; then
-            if ! grep -q "android:windowOptOutEdgeToEdgeEnforcement" "$STYLES_FILE"; then
-              sed -i '/<style name="AppTheme\.NoActionBar" parent="Theme\.AppCompat\.DayNight\.NoActionBar">/a \        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>' "$STYLES_FILE"
-              sed -i '/<style name="AppTheme\.NoActionBarLaunch" parent="Theme\.SplashScreen">/a \        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>' "$STYLES_FILE"
-              echo "Added android:windowOptOutEdgeToEdgeEnforcement to styles.xml"
-            else
-              echo "android:windowOptOutEdgeToEdgeEnforcement already exists in styles.xml"
-            fi
-          fi
+          node -e '
+            const fs = require("fs");
+            const file = "android/app/src/main/res/values/styles.xml";
+            if (fs.existsSync(file)) {
+              let content = fs.readFileSync(file, "utf8");
+              if (!content.includes("android:windowOptOutEdgeToEdgeEnforcement")) {
+                const item = "        <item name=\"android:windowOptOutEdgeToEdgeEnforcement\">true</item>\n";
+                content = content.replace(/(<style name="AppTheme\.NoActionBar"[^>]*>)/, "$1\n" + item);
+                content = content.replace(/(<style name="AppTheme\.NoActionBarLaunch"[^>]*>)/, "$1\n" + item);
+                fs.writeFileSync(file, content, "utf8");
+                console.log("Added android:windowOptOutEdgeToEdgeEnforcement to styles.xml");
+              } else {
+                console.log("android:windowOptOutEdgeToEdgeEnforcement already exists in styles.xml");
+              }
+            } else {
+              console.log("styles.xml not found, skipping.");
+            }
+          '
 
       - name: Accept Android SDK Licenses
         run: |

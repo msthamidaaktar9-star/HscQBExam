@@ -51,8 +51,10 @@ import {
   FileDown,
   Layers,
   ArrowLeft,
+  AlertTriangle,
 } from 'lucide-react';
 import { Share } from '@capacitor/share';
+import { exportPaperById } from '../utils/pdfGenerator';
 
 type ProfileViewMode = 'main' | 'categories' | 'category-detail';
 
@@ -82,6 +84,8 @@ export const ProfileScreen: React.FC = () => {
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
   const [viewPaperId, setViewPaperId] = useState<string | null>(null);
+  const [exportingPaperId, setExportingPaperId] = useState<string | null>(null);
+  const [pdfErrorMessage, setPdfErrorMessage] = useState<string | null>(null);
 
   // Category Dialogs
   const [categoryPrompt, setCategoryPrompt] = useState<{
@@ -232,6 +236,21 @@ export const ProfileScreen: React.FC = () => {
       switchTab('create');
     } catch {
       showToast('লোড করতে সমস্যা হয়েছে');
+    }
+  };
+
+  // Export paper to PDF directly from Category detail list
+  const handleExportPaperPdf = async (paper: Paper) => {
+    setExportingPaperId(paper.id);
+    showToast('PDF বানানো হচ্ছে…');
+    try {
+      await exportPaperById(paper.id);
+      showToast('PDF তৈরি সম্পন্ন হয়েছে');
+    } catch (err: any) {
+      console.error('PDF export failed:', err);
+      setPdfErrorMessage(err?.message || 'পিডিএফ তৈরিতে অপ্রত্যাশিত সমস্যা হয়েছে।');
+    } finally {
+      setExportingPaperId(null);
     }
   };
 
@@ -560,11 +579,12 @@ export const ProfileScreen: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setViewPaperId(paper.id)}
-                              className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-[#3B4FD8] text-[#3B4FD8] dark:text-indigo-400 hover:bg-[#EEF2FF] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                              disabled={exportingPaperId === paper.id}
+                              onClick={() => handleExportPaperPdf(paper)}
+                              className="flex-1 min-h-[44px] px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-[#3B4FD8] text-[#3B4FD8] dark:text-indigo-400 hover:bg-[#EEF2FF] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                             >
                               <FileDown className="w-4 h-4" />
-                              <span>PDF</span>
+                              <span>{exportingPaperId === paper.id ? 'তৈরি হচ্ছে...' : 'PDF'}</span>
                             </button>
                           </div>
                         </div>
@@ -815,7 +835,7 @@ export const ProfileScreen: React.FC = () => {
         }}
       />
 
-      {/* Paper View Modal (from Category Detail PDF button) */}
+      {/* Paper View Modal (from Category Detail view) */}
       <PaperViewModal
         paperId={viewPaperId}
         isOpen={Boolean(viewPaperId)}
@@ -826,6 +846,34 @@ export const ProfileScreen: React.FC = () => {
         }}
         onDeleted={loadData}
       />
+
+      {/* PDF Failure Error Modal showing real error.message */}
+      {pdfErrorMessage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in"
+        >
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl p-5 border border-red-200 dark:border-red-900 shadow-2xl space-y-3">
+            <div className="flex items-center gap-2 text-red-600 font-bold text-sm">
+              <AlertTriangle className="w-5 h-5" />
+              <span>PDF তৈরিতে ত্রুটি</span>
+            </div>
+            <p className="text-xs text-[#1B1F2A] dark:text-slate-200 bg-red-50 dark:bg-red-950/40 p-3 rounded-xl border border-red-100 dark:border-red-900 font-mono break-all leading-relaxed">
+              {pdfErrorMessage}
+            </p>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setPdfErrorMessage(null)}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-[#3B4FD8] text-white text-xs font-bold"
+              >
+                ঠিক আছে
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

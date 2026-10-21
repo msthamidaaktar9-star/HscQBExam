@@ -143,9 +143,9 @@ export const PaperViewModal: React.FC<PaperViewModalProps> = ({
 
     try {
       await generateAndSharePdf({
-        container: targetElement,
-        title: paper.title || paper.shortName,
-        shortName: paper.shortName,
+        paper,
+        groupedQuestions,
+        imageUrls,
       });
       showToast('PDF তৈরি সম্পন্ন হয়েছে');
     } catch (err: any) {

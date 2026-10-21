@@ -1,1 +1,70 @@
+@import "@fontsource/hind-siliguri/bengali-400.css";
+@import "@fontsource/hind-siliguri/bengali-500.css";
+@import "@fontsource/hind-siliguri/bengali-600.css";
+@import "@fontsource/hind-siliguri/400.css";
+@import "@fontsource/hind-siliguri/500.css";
+@import "@fontsource/hind-siliguri/600.css";
+@import "katex/dist/katex.min.css";
 @import "tailwindcss";
+
+:root {
+  --color-primary: #3B4FD8;
+  --color-primary-dark: #2A3BB0;
+  --color-bg: #F2F4F8;
+  --color-card: #FFFFFF;
+  --color-border: #D5D9E2;
+  --color-text-main: #1B1F2A;
+  --color-text-blue: #2A3BB0;
+  font-family: 'Hind Siliguri', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #F2F4F8;
+  color: #1B1F2A;
+  font-family: 'Hind Siliguri', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* Ensure minimum button heights for touch accessibility */
+button,
+[role="button"] {
+  min-height: 44px;
+}
+
+/* KaTeX responsive scroll & containment rules */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  padding: 4px 0;
+}
+
+.katex {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D5D9E2;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B4B9C6;
+}

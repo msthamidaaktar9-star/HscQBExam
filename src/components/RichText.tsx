@@ -5,6 +5,7 @@ import 'katex/dist/katex.min.css';
 export interface RichTextProps {
   text: string;
   className?: string;
+  style?: React.CSSProperties;
 }
 
 interface Segment {
@@ -67,7 +68,7 @@ function parseSegments(rawText: string): Segment[] {
   return segments;
 }
 
-export const RichText: React.FC<RichTextProps> = ({ text, className = '' }) => {
+export const RichText: React.FC<RichTextProps> = ({ text, className = '', style = {} }) => {
   const segments = useMemo(() => parseSegments(text), [text]);
 
   if (!text) {
@@ -75,7 +76,16 @@ export const RichText: React.FC<RichTextProps> = ({ text, className = '' }) => {
   }
 
   return (
-    <div className={`whitespace-pre-wrap break-words leading-relaxed text-[#1B1F2A] ${className}`}>
+    <div
+      className={`leading-relaxed text-[#1B1F2A] ${className}`}
+      style={{
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
+        whiteSpace: 'pre-wrap',
+        maxWidth: '100%',
+        ...style,
+      }}
+    >
       {segments.map((segment, index) => {
         if (segment.type === 'text') {
           return <span key={index}>{segment.content}</span>;
@@ -94,6 +104,10 @@ export const RichText: React.FC<RichTextProps> = ({ text, className = '' }) => {
               <span
                 key={index}
                 className="block my-2 text-center overflow-x-auto py-1 max-w-full select-text"
+                style={{
+                  maxWidth: '100%',
+                  overflowX: 'auto',
+                }}
                 dangerouslySetInnerHTML={{ __html: renderedHtml }}
               />
             );
@@ -102,7 +116,12 @@ export const RichText: React.FC<RichTextProps> = ({ text, className = '' }) => {
           return (
             <span
               key={index}
-              className="inline-block mx-0.5 align-middle select-text"
+              className="inline-block mx-0.5 align-middle select-text max-w-full overflow-x-auto"
+              style={{
+                maxWidth: '100%',
+                overflowX: 'auto',
+                verticalAlign: 'middle',
+              }}
               dangerouslySetInnerHTML={{ __html: renderedHtml }}
             />
           );
@@ -113,6 +132,7 @@ export const RichText: React.FC<RichTextProps> = ({ text, className = '' }) => {
               key={index}
               title={`LaTeX Error: ${error?.message || 'Syntax error'}`}
               className="inline-block text-red-600 bg-red-50 border border-red-200 px-1 py-0.5 mx-0.5 rounded text-xs font-mono break-all align-middle"
+              style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
             >
               {isBlock ? `$$${segment.content}$$` : `$${segment.content}$`}
             </span>
