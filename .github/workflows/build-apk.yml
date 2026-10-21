@@ -45,22 +45,24 @@ jobs:
           STYLES_FILE="android/app/src/main/res/values/styles.xml"
           if [ -f "$STYLES_FILE" ]; then
             if ! grep -q "android:windowOptOutEdgeToEdgeEnforcement" "$STYLES_FILE"; then
-              python3 -c "
-              import os
-              path = '$STYLES_FILE'
-              with open(path, 'r', encoding='utf-8') as f:
-                  content = f.read()
-              opt_out = '        <item name=\"android:windowOptOutEdgeToEdgeEnforcement\">true</item>\n'
-              targets = [
-                  '<style name=\"AppTheme.NoActionBar\" parent=\"Theme.AppCompat.DayNight.NoActionBar\">',
-                  '<style name=\"AppTheme.NoActionBarLaunch\" parent=\"Theme.SplashScreen\">'
-              ]
-              for target in targets:
-                  if target in content and opt_out not in content:
-                      content = content.replace(target, target + '\n' + opt_out)
-              with open(path, 'w', encoding='utf-8') as f:
-                  f.write(content)
-              "
+              python3 - << 'EOF'
+import os
+
+path = "android/app/src/main/res/values/styles.xml"
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    opt_out = '        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>\n'
+    targets = [
+        '<style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">',
+        '<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">'
+    ]
+    for target in targets:
+        if target in content and (target + '\n' + opt_out) not in content:
+            content = content.replace(target, target + '\n' + opt_out)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+EOF
               echo "Added android:windowOptOutEdgeToEdgeEnforcement to styles.xml"
             else
               echo "android:windowOptOutEdgeToEdgeEnforcement already exists in styles.xml"
